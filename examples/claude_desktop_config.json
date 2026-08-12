@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "underwriting": {
+      "command": "python",
+      "args": ["-m", "mcp_uw_workbench.underwriting.server"]
+    },
+    "risk": {
+      "command": "python",
+      "args": ["-m", "mcp_uw_workbench.risk.server"]
+    },
+    "pricing": {
+      "command": "python",
+      "args": ["-m", "mcp_uw_workbench.pricing.server"]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+# docker-compose for local dev. Each MCP server runs in its own container,
+# on stdio. For client access from outside Docker (e.g., Claude Desktop on
+# the host), expose via SSE transport in v0.4.
+
+services:
+  risk-mcp:
+    build: .
+    command: risk-mcp
+    stdin_open: true
+    tty: true
+
+  pricing-mcp:
+    build: .
+    command: pricing-mcp
+    stdin_open: true
+    tty: true
+
+  underwriting-mcp:
+    build: .
+    command: underwriting-mcp
+    stdin_open: true
+    tty: true
+    depends_on:
+      - risk-mcp
+      - pricing-mcp

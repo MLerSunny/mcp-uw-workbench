@@ -1,0 +1,122 @@
+[
+  {
+    "id": "clean-ny-water",
+    "description": "Clean applicant, low-risk state and peril. Should quote outright.",
+    "input": {
+      "applicant_id": "APP-00004",
+      "product": "homeowners",
+      "state": "NY",
+      "coverage_amount_usd": 350000.0,
+      "peril": "water"
+    },
+    "expected_decision": "quote",
+    "expected_delegations": [
+      "risk.score_risk",
+      "risk.pull_loss_history",
+      "pricing.lookup_base_rate",
+      "pricing.calculate_premium",
+      "pricing.apply_modifiers"
+    ],
+    "expected_risk_band": "low"
+  },
+  {
+    "id": "clean-tx-wind",
+    "description": "Band-A applicant inland Texas. Should quote with a credit applied.",
+    "input": {
+      "applicant_id": "APP-00002",
+      "product": "homeowners",
+      "state": "TX",
+      "coverage_amount_usd": 400000.0,
+      "peril": "wind"
+    },
+    "expected_decision": "quote",
+    "expected_delegations": [
+      "risk.score_risk",
+      "risk.pull_loss_history",
+      "pricing.lookup_base_rate",
+      "pricing.calculate_premium",
+      "pricing.apply_modifiers"
+    ],
+    "expected_risk_band": "low"
+  },
+  {
+    "id": "fl-coastal-hurricane",
+    "description": "Coastal Florida within 1km. Eligibility rule forces underwriter referral.",
+    "input": {
+      "applicant_id": "APP-00001",
+      "product": "homeowners",
+      "state": "FL",
+      "coverage_amount_usd": 750000.0,
+      "peril": "hurricane"
+    },
+    "expected_decision": "refer",
+    "expected_delegations": [
+      "risk.score_risk",
+      "risk.pull_loss_history",
+      "pricing.lookup_base_rate",
+      "pricing.calculate_premium",
+      "pricing.apply_modifiers"
+    ],
+    "expected_risk_band": "medium"
+  },
+  {
+    "id": "ca-wildfire-heavy-claims",
+    "description": "Three prior claims plus extreme wildfire exposure. Referral, high risk.",
+    "input": {
+      "applicant_id": "APP-00003",
+      "product": "homeowners",
+      "state": "CA",
+      "coverage_amount_usd": 500000.0,
+      "peril": "fire"
+    },
+    "expected_decision": "refer",
+    "expected_delegations": [
+      "risk.score_risk",
+      "risk.pull_loss_history",
+      "pricing.lookup_base_rate",
+      "pricing.calculate_premium",
+      "pricing.apply_modifiers"
+    ],
+    "expected_risk_band": "high"
+  },
+  {
+    "id": "fl-hurricane-repeat-claimant",
+    "description": "Two hurricane-era claims, coastal but beyond 1km. Risk loading should bite.",
+    "input": {
+      "applicant_id": "APP-00005",
+      "product": "homeowners",
+      "state": "FL",
+      "coverage_amount_usd": 600000.0,
+      "peril": "hurricane"
+    },
+    "expected_decision": "quote",
+    "expected_delegations": [
+      "risk.score_risk",
+      "risk.pull_loss_history",
+      "pricing.lookup_base_rate",
+      "pricing.calculate_premium",
+      "pricing.apply_modifiers"
+    ],
+    "expected_risk_band": "medium"
+  },
+  {
+    "id": "unratable-peril-earthquake",
+    "description": "Earthquake has no homeowners rate on file. Must surface the gap, not price at zero.",
+    "input": {
+      "applicant_id": "APP-00003",
+      "product": "homeowners",
+      "state": "CA",
+      "coverage_amount_usd": 500000.0,
+      "peril": "earthquake"
+    },
+    "expected_decision": "refer",
+    "expected_delegations": [
+      "risk.score_risk",
+      "risk.pull_loss_history",
+      "pricing.lookup_base_rate",
+      "pricing.calculate_premium",
+      "pricing.apply_modifiers"
+    ],
+    "expected_risk_band": "any"
+  }
+]

@@ -1,0 +1,96 @@
+[
+  {
+    "applicant_id": "APP-00001",
+    "full_name": "Synthetic Applicant Alpha",
+    "age": 42,
+    "state": "FL",
+    "credit_band": "B",
+    "prior_claims_count": 1,
+    "occupation_class": "II",
+    "loss_history": [
+      { "date": "2024-09-12", "peril": "water", "paid_amount_usd": 8400.0, "closed": true }
+    ],
+    "property": {
+      "address": "Synthetic 123 Beach Rd, Naples FL",
+      "coastal_distance_km": 0.4,
+      "flood_zone": "AE",
+      "wildfire_risk": "low",
+      "construction_year": 1998
+    }
+  },
+  {
+    "applicant_id": "APP-00002",
+    "full_name": "Synthetic Applicant Bravo",
+    "age": 35,
+    "state": "TX",
+    "credit_band": "A",
+    "prior_claims_count": 0,
+    "occupation_class": "I",
+    "loss_history": [],
+    "property": {
+      "address": "Synthetic 456 Oak St, Austin TX",
+      "coastal_distance_km": 215.0,
+      "flood_zone": "X",
+      "wildfire_risk": "moderate",
+      "construction_year": 2018
+    }
+  },
+  {
+    "applicant_id": "APP-00003",
+    "full_name": "Synthetic Applicant Charlie",
+    "age": 58,
+    "state": "CA",
+    "credit_band": "C",
+    "prior_claims_count": 3,
+    "occupation_class": "III",
+    "loss_history": [
+      { "date": "2023-07-04", "peril": "wildfire", "paid_amount_usd": 42000.0, "closed": true },
+      { "date": "2022-02-18", "peril": "theft", "paid_amount_usd": 3200.0, "closed": true },
+      { "date": "2021-11-30", "peril": "water", "paid_amount_usd": 5800.0, "closed": true }
+    ],
+    "property": {
+      "address": "Synthetic 789 Pine Ave, Paradise CA",
+      "coastal_distance_km": 95.0,
+      "flood_zone": "X",
+      "wildfire_risk": "extreme",
+      "construction_year": 1979
+    }
+  },
+  {
+    "applicant_id": "APP-00004",
+    "full_name": "Synthetic Applicant Delta",
+    "age": 29,
+    "state": "NY",
+    "credit_band": "A",
+    "prior_claims_count": 0,
+    "occupation_class": "I",
+    "loss_history": [],
+    "property": {
+      "address": "Synthetic 101 Maple Ln, Albany NY",
+      "coastal_distance_km": 180.0,
+      "flood_zone": "X",
+      "wildfire_risk": "low",
+      "construction_year": 2021
+    }
+  },
+  {
+    "applicant_id": "APP-00005",
+    "full_name": "Synthetic Applicant Echo",
+    "age": 67,
+    "state": "FL",
+    "credit_band": "B",
+    "prior_claims_count": 2,
+    "occupation_class": "IV",
+    "loss_history": [
+      { "date": "2024-10-08", "peril": "hurricane", "paid_amount_usd": 78000.0, "closed": true },
+      { "date": "2022-09-29", "peril": "wind", "paid_amount_usd": 12500.0, "closed": true }
+    ],
+    "property": {
+      "address": "Synthetic 555 Palm Way, Tampa FL",
+      "coastal_distance_km": 12.5,
+      "flood_zone": "AE",
+      "wildfire_risk": "low",
+      "construction_year": 1985
+    }
+  }
+]
