@@ -81,7 +81,7 @@
   },
   {
     "id": "fl-hurricane-repeat-claimant",
-    "description": "Two hurricane-era claims, coastal but beyond 1km. Risk loading should bite.",
+    "description": "Two claims totalling $90,500 paid, coastal but beyond 1km. Only two claims, so the count-based rule passes it - the aggregate-severity rule must catch it instead and refer.",
     "input": {
       "applicant_id": "APP-00005",
       "product": "homeowners",
@@ -89,7 +89,7 @@
       "coverage_amount_usd": 600000.0,
       "peril": "hurricane"
     },
-    "expected_decision": "quote",
+    "expected_decision": "refer",
     "expected_delegations": [
       "risk.score_risk",
       "risk.pull_loss_history",
@@ -98,6 +98,20 @@
       "pricing.apply_modifiers"
     ],
     "expected_risk_band": "medium"
+  },
+  {
+    "id": "oversized-coverage-declined",
+    "description": "Otherwise pristine band-A applicant requesting $5M against a $1.5M TX capacity. Declined outright - and declined without spending a single peer round-trip.",
+    "input": {
+      "applicant_id": "APP-00002",
+      "product": "homeowners",
+      "state": "TX",
+      "coverage_amount_usd": 5000000.0,
+      "peril": "wind"
+    },
+    "expected_decision": "decline",
+    "expected_delegations": [],
+    "expected_risk_band": "any"
   },
   {
     "id": "unratable-peril-earthquake",

@@ -42,17 +42,30 @@ def lookup_applicant(applicant_id: str) -> dict:
 
 
 @mcp.tool()
-def check_eligibility(applicant_id: str, product: str, state: str) -> dict:
+def check_eligibility(
+    applicant_id: str,
+    product: str,
+    state: str,
+    coverage_amount_usd: float | None = None,
+) -> dict:
     """Apply underwriting eligibility rules for a product and state.
 
     Returns one of: eligible, refer_to_underwriter, declined - with reasons.
+
+    Args:
+        applicant_id: Synthetic applicant identifier.
+        product: Product line, e.g. "homeowners".
+        state: Two-letter state code.
+        coverage_amount_usd: Requested limit. Omit to skip the capacity
+            check; supply it to have coverage above the carrier's filed
+            capacity declined outright.
     """
     try:
         applicant = get_applicant(applicant_id)
     except KeyError:
         return {"error": f"Unknown applicant_id: {applicant_id}"}
 
-    return _eligibility(applicant, product, state).model_dump()
+    return _eligibility(applicant, product, state, coverage_amount_usd).model_dump()
 
 
 @mcp.tool()

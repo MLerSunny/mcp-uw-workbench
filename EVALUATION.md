@@ -22,7 +22,7 @@ Implemented in `tests/eval/`. Run it with `pytest tests/eval -q -s`.
 | Delegation accuracy | ≥ 95% | 100% |
 | Decision accuracy | ≥ 90% | 100% |
 | Redundant peer calls | 0 | 0 |
-| Scenarios | — | 6 |
+| Scenarios | — | 7 |
 
 Latency is deliberately **not** an SLO yet. Under stdio each peer is a
 short-lived subprocess, so measured time is dominated by process spawn
@@ -53,6 +53,27 @@ scenario exposed a defect where a peril with no filed rate produced a
 system, a free policy. The orchestrator now detects the missing rate and
 forces a referral. Pinned by
 `test_missing_filed_rate_forces_referral_not_zero_premium`.
+
+Two later findings came from auditing coverage rather than from a failing
+assertion, which is worth stating plainly — a green suite is not evidence
+that every branch is reachable:
+
+- **The `declined` outcome was unreachable.** The graph had a conditional
+  edge skipping both peer agents for declined risks, a `decline` decision
+  mapping, and a `declined` value in the `EligibilityOutcome` literal — but
+  no rule could produce it, across all 40 applicant × product × state
+  combinations. Capacity limits now do, and `oversized-coverage-declined`
+  keeps that edge exercised with an empty `expected_delegations`, asserting
+  the short-circuit actually saves the round-trips.
+
+- **A delegation whose result was discarded.** `pull_loss_history` was
+  called, stored, and then explicitly stripped before the quote was built —
+  it inflated the delegation count without affecting any decision. The
+  aggregate-severity rule now consumes it. This changed
+  `fl-hurricane-repeat-claimant` from `quote` to `refer`: two claims pass
+  the count-based rule, but $90,500 of paid losses should not pass silently.
+  The ground truth in `scenarios.json` was updated deliberately, and the
+  harness failing on that scenario is what proved the rule had teeth.
 
 ## Why this matters for hiring
 

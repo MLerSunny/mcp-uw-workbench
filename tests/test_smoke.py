@@ -6,9 +6,11 @@ Real cross-process MCP behaviour is covered in `test_mcp_integration.py`.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
-from mcp_uw_workbench.gateway import DirectGateway
+from mcp_uw_workbench.gateway import DirectGateway, PeerUnavailable
 from mcp_uw_workbench.pricing.server import (
     apply_modifiers,
     calculate_premium,
@@ -106,6 +108,35 @@ def test_eligibility_clean_applicant_passes() -> None:
     assert out["reasons"] == []
 
 
+def test_eligibility_declines_coverage_above_capacity() -> None:
+    """Above the filed capacity is a decline, not a referral."""
+    out = check_eligibility(
+        applicant_id="APP-00002", product="homeowners", state="TX",
+        coverage_amount_usd=5_000_000.0,
+    )
+    assert out["outcome"] == "declined"
+    assert any("capacity" in r for r in out["reasons"])
+
+
+def test_eligibility_capacity_check_skipped_when_coverage_omitted() -> None:
+    """The capacity rule is opt-in, so the tool stays usable without a limit."""
+    out = check_eligibility(applicant_id="APP-00002", product="homeowners", state="TX")
+    assert out["outcome"] == "eligible"
+
+
+def test_capacity_decline_outranks_referral() -> None:
+    """An applicant who would otherwise be referred is still declined.
+
+    Ordering matters: a referral means 'a human should look at this', a
+    decline means 'there is nothing to look at'. Capacity wins.
+    """
+    out = check_eligibility(
+        applicant_id="APP-00003", product="homeowners", state="CA",
+        coverage_amount_usd=9_000_000.0,
+    )
+    assert out["outcome"] == "declined"
+
+
 # --------------------------------------------------------------------------
 # orchestrator
 # --------------------------------------------------------------------------
@@ -156,6 +187,89 @@ async def test_rationale_records_delegations() -> None:
     )
     assert "Delegated to:" in quote["rationale"]
     assert "risk.score_risk" in quote["rationale"]
+
+
+@pytest.mark.anyio
+async def test_declined_risk_costs_zero_peer_calls() -> None:
+    """A decline short-circuits before risk and pricing.
+
+    Regression: the declined branch was unreachable, so this edge of the
+    graph was never exercised.
+    """
+    gw = DirectGateway()
+    quote = await run_quote(
+        "APP-00002", "homeowners", "TX", 5_000_000.0, "wind", gateway=gw
+    )
+    assert quote["decision"] == "decline"
+    assert gw.calls == [], "declined risks must not spend peer round-trips"
+    assert quote["risk_score"] is None
+    assert quote["premium"] is None
+
+
+@pytest.mark.anyio
+async def test_aggregate_paid_losses_force_referral() -> None:
+    """Severity, not just frequency.
+
+    APP-00005 has only two claims, so the 3+ count rule passes it. Their
+    combined $90,500 of paid losses should still refer - and that total is
+    only visible through the `pull_loss_history` delegation.
+    """
+    gw = DirectGateway()
+    quote = await run_quote(
+        "APP-00005", "homeowners", "FL", 600_000.0, "hurricane", gateway=gw
+    )
+    assert quote["eligibility"]["outcome"] == "eligible"
+    assert quote["decision"] == "refer"
+    assert "90,500" in quote["rationale"]
+
+
+@pytest.mark.anyio
+async def test_loss_history_reaches_the_rationale() -> None:
+    """The second risk delegation must affect output, not just call count."""
+    gw = DirectGateway()
+    quote = await run_quote(
+        "APP-00001", "homeowners", "FL", 750_000.0, "hurricane", gateway=gw
+    )
+    assert "Loss history: 1 event(s)" in quote["rationale"]
+
+
+class _FailingGateway:
+    """Gateway double whose peer dies on a named tool."""
+
+    def __init__(self, fail_on: str) -> None:
+        self.fail_on = fail_on
+        self.delegate = DirectGateway()
+
+    async def call(self, server: str, tool: str, args: dict[str, Any]) -> dict[str, Any]:
+        if tool == self.fail_on:
+            raise PeerUnavailable(f"{server}.{tool} failed: ConnectionResetError")
+        return await self.delegate.call(server, tool, args)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("fail_on", ["score_risk", "lookup_base_rate", "apply_modifiers"])
+async def test_peer_failure_refers_instead_of_auto_quoting(fail_on: str) -> None:
+    """Fail closed. An unreachable peer must never yield an automatic quote.
+
+    APP-00002 is the cleanest applicant in the set and quotes normally, so
+    any decision other than `quote` here is attributable to the outage.
+    """
+    quote = await run_quote(
+        "APP-00002", "homeowners", "TX", 400_000.0, "wind",
+        gateway=_FailingGateway(fail_on=fail_on),
+    )
+    assert quote["decision"] == "refer"
+    assert "Peer agent unavailable" in quote["rationale"]
+
+
+@pytest.mark.anyio
+async def test_pricing_skipped_once_risk_peer_is_down() -> None:
+    """Don't compound an outage with a second doomed round-trip."""
+    gw = _FailingGateway(fail_on="score_risk")
+    await run_quote("APP-00002", "homeowners", "TX", 400_000.0, "wind", gateway=gw)
+
+    called = [tool for _, tool, _ in gw.delegate.calls]
+    assert called == [], "no pricing calls should follow a dead risk peer"
 
 
 @pytest.mark.anyio

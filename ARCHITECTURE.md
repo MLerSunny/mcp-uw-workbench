@@ -98,6 +98,30 @@ This pattern maps cleanly to:
 - **LangGraph supervisor** — the orchestrator is the supervisor node; risk/pricing are worker agents.
 - **OpenAI Swarm** — the orchestrator is the routing function.
 
+## Failure modes
+
+Distributed agents fail independently, so the supervisor treats two kinds of
+"bad news" differently:
+
+| Situation | Surface | Orchestrator response |
+|---|---|---|
+| Peer answers with an error payload (unknown applicant, no filed rate) | Normal MCP result containing `error` | Data. Surfaced in the rationale; a missing rate forces a referral rather than a $0 quote. |
+| Peer unreachable, hung, or dead mid-call | `PeerUnavailable` from the gateway | Fail closed. Remaining delegations are skipped and the decision is downgraded to `refer`. |
+
+`MCPGateway` converts every transport-level fault — subprocess that will not
+start, broken stdio pipe, handshake or call exceeding `timeout_s` — into
+`PeerUnavailable`. Cancellation is deliberately *not* converted; that belongs
+to the caller, not to a peer.
+
+The rule the design enforces: **an outage must never produce an automatic
+quote.** A quote issued without a risk score because risk-mcp was down is a
+worse outcome than a referral, so the orchestrator never silently degrades
+into one. `test_peer_failure_refers_instead_of_auto_quoting` pins this for a
+failure at each stage of the chain.
+
+Two round-trips are also deliberately *not* spent: once the risk peer is
+known down, pricing is skipped rather than called into the same outage.
+
 ## Non-goals
 
 - This is **not** a complete underwriting system. It is a reference architecture for MCP + multi-agent orchestration patterns.

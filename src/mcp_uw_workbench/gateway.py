@@ -26,12 +26,27 @@ import sys
 from contextlib import AsyncExitStack
 from typing import Any, Protocol, Self, runtime_checkable
 
+import anyio
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 # Logical peer names used by the orchestrator.
 RISK = "risk"
 PRICING = "pricing"
+
+# A peer that has not answered in this long is treated as down rather than
+# waited on indefinitely - a hung subprocess must not hang the quote.
+DEFAULT_CALL_TIMEOUT_S = 30.0
+
+
+class PeerUnavailable(RuntimeError):
+    """A peer agent could not be reached, timed out, or failed mid-call.
+
+    Distinct from a peer *answering* with an error payload (an unknown
+    applicant, say). That is data and travels back as a normal result;
+    this is the transport itself failing, and the orchestrator must not
+    auto-quote through it.
+    """
 
 
 @runtime_checkable
@@ -96,8 +111,13 @@ class MCPGateway:
             risk = await gw.call("risk", "score_risk", {...})
     """
 
-    def __init__(self, peers: dict[str, StdioServerParameters] | None = None) -> None:
+    def __init__(
+        self,
+        peers: dict[str, StdioServerParameters] | None = None,
+        timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
+    ) -> None:
         self._peers = peers if peers is not None else DEFAULT_PEERS
+        self._timeout_s = timeout_s
         self._sessions: dict[str, ClientSession] = {}
         self._stack: AsyncExitStack | None = None
 
@@ -105,16 +125,29 @@ class MCPGateway:
         stack = AsyncExitStack()
         await stack.__aenter__()
         self._stack = stack
+        connecting = "<none>"
         try:
             for name, params in self._peers.items():
+                connecting = name
                 read, write = await stack.enter_async_context(stdio_client(params))
                 session = await stack.enter_async_context(ClientSession(read, write))
-                await session.initialize()
+                # Only the handshake is inside the cancel scope. The two
+                # contexts above are owned by `stack` and will be exited well
+                # outside this scope - closing them from within a cancel scope
+                # that is no longer current is an anyio error.
+                with anyio.fail_after(self._timeout_s):
+                    await session.initialize()
                 self._sessions[name] = session
-        except BaseException:
+        except BaseException as exc:
             await stack.aclose()
             self._stack = None
             self._sessions.clear()
+            # Cancellation is the caller's business, not a peer fault - let it
+            # through untouched. Everything else is a peer that failed to start.
+            if isinstance(exc, Exception):
+                raise PeerUnavailable(
+                    f"could not start peer {connecting!r}: {type(exc).__name__}: {exc}"
+                ) from exc
             raise
         return self
 
@@ -131,7 +164,21 @@ class MCPGateway:
                 f"No MCP session for peer {server!r}. "
                 "Enter the MCPGateway context before calling."
             )
-        result = await session.call_tool(tool, args)
+
+        try:
+            with anyio.fail_after(self._timeout_s):
+                result = await session.call_tool(tool, args)
+        except TimeoutError as exc:
+            raise PeerUnavailable(
+                f"{server}.{tool} did not respond within {self._timeout_s:g}s"
+            ) from exc
+        except Exception as exc:
+            # Subprocess died, stdio pipe broke, protocol error - all the same
+            # to the caller: this peer cannot be relied on for this quote.
+            raise PeerUnavailable(
+                f"{server}.{tool} failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
         return _unwrap(result)
 
     async def list_peer_tools(self) -> dict[str, list[str]]:

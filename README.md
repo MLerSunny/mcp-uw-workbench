@@ -22,6 +22,7 @@ APP-00003 · CA · fire · $500,000   (3 prior claims, extreme wildfire)
   premium  : $5,724.60
   Eligibility: refer_to_underwriter
   Reasons: 3+ prior claims in 5 years
+  Loss history: 3 event(s), $51,000.00 paid
   Risk score 91.0 (confidence 85%); factors: 3 prior claims (severe), credit band C, extreme wildfire risk
   Final premium $5,724.60 (base $2,900.00, risk loading $1,189.00, surcharges $1,635.60, credits $0.00)
   Delegated to: risk.score_risk, risk.pull_loss_history, pricing.lookup_base_rate, pricing.calculate_premium, pricing.apply_modifiers
@@ -78,8 +79,8 @@ python examples/01_quote_flow.py
 **Run the tests:**
 
 ```bash
-pytest -m "not integration"   # 25 unit tests, ~1.5s
-pytest -m integration         # 5 tests over real MCP subprocesses, ~14s
+pytest -m "not integration"   # 36 unit + eval tests, ~2s
+pytest -m integration         # 6 tests over real MCP subprocesses, ~14s
 pytest tests/eval -s          # evaluation harness with scorecard
 ```
 
@@ -120,7 +121,8 @@ Most MCP demos ship without any measurement. This one has a harness — see [`EV
   clean-tx-wind                    delegation=PASS  decision=PASS (quote)
   fl-coastal-hurricane             delegation=PASS  decision=PASS (refer)
   ca-wildfire-heavy-claims         delegation=PASS  decision=PASS (refer)
-  fl-hurricane-repeat-claimant     delegation=PASS  decision=PASS (quote)
+  fl-hurricane-repeat-claimant     delegation=PASS  decision=PASS (refer)
+  oversized-coverage-declined      delegation=PASS  decision=PASS (decline)
   unratable-peril-earthquake       delegation=PASS  decision=PASS (refer)
 
   delegation accuracy : 100% (SLO 95%)
@@ -128,6 +130,21 @@ Most MCP demos ship without any measurement. This one has a harness — see [`EV
 ```
 
 The harness caught a real defect during development: an unratable peril produced a **$0 premium that passed through as a valid quote**. It now forces a referral. That regression is pinned by `test_missing_filed_rate_forces_referral_not_zero_premium`.
+
+## Refusing to auto-quote
+
+Three separate conditions stop an automatic quote, because in underwriting a
+wrong "yes" is far more expensive than an unnecessary referral:
+
+| Condition | Outcome | Why |
+|---|---|---|
+| Coverage above filed capacity | **decline** | No underwriter review makes a risk writable when the carrier has no capacity for it. Short-circuits before any peer call. |
+| Aggregate paid losses ≥ threshold | **refer** | Severity, not just frequency — two large losses outweigh three small ones, and only the `pull_loss_history` delegation can see that. |
+| Peer agent unreachable | **refer** | Fail closed. A risk-scoring outage must never degrade into a quote issued without a risk score. |
+
+`PeerUnavailable` deliberately separates *transport* failure from a peer
+answering with an error payload. The first fails closed; the second is
+ordinary data and travels back to the client as-is.
 
 ---
 

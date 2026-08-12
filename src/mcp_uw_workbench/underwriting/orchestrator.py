@@ -15,6 +15,11 @@ Graph shape:
                                                     |                    |
                                                     +--------------------+
                                                      (declined: skip both)
+
+The declined branch is not decorative: coverage above the carrier's filed
+capacity is refused outright, and refusing it *before* the risk and pricing
+delegations is the point - there is no reason to spend two peer round-trips
+scoring a risk we have no capacity to write.
 """
 
 from __future__ import annotations
@@ -23,8 +28,8 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from mcp_uw_workbench.data_loader import get_applicant
-from mcp_uw_workbench.gateway import PRICING, RISK, ToolGateway
+from mcp_uw_workbench.data_loader import get_applicant, load_underwriting_rules
+from mcp_uw_workbench.gateway import PRICING, RISK, PeerUnavailable, ToolGateway
 from mcp_uw_workbench.shared import (
     EligibilityCheck,
     PremiumBreakdown,
@@ -45,14 +50,31 @@ class QuoteState(TypedDict, total=False):
     applicant: dict[str, Any]
     eligibility: dict[str, Any]
     risk: dict[str, Any]
+    loss_history: dict[str, Any]
     base_rate: dict[str, Any]
     premium: dict[str, Any]
     quote: dict[str, Any]
     delegations: list[str]
     pricing_gap: str
+    peer_failure: str
 
 
-def _eligibility(applicant: dict[str, Any], product: str, state: str) -> EligibilityCheck:
+def _capacity_limit(product: str, state: str) -> float | None:
+    """Maximum coverage the carrier will write for this product and state."""
+    rules = load_underwriting_rules()
+    limits = rules.get("capacity_limits_usd", {})
+    by_state = limits.get(product)
+    if by_state is None:
+        return rules.get("default_capacity_usd")
+    return by_state.get(state, rules.get("default_capacity_usd"))
+
+
+def _eligibility(
+    applicant: dict[str, Any],
+    product: str,
+    state: str,
+    coverage_amount_usd: float | None = None,
+) -> EligibilityCheck:
     """Underwriting eligibility rules. Local to the supervisor - these are
     company policy, not something a peer agent should own."""
     reasons: list[str] = []
@@ -67,6 +89,18 @@ def _eligibility(applicant: dict[str, Any], product: str, state: str) -> Eligibi
         if prop.get("coastal_distance_km", 999) < 1.0:
             reasons.append("coastal property within 1km")
             outcome = "refer_to_underwriter"
+
+    # Capacity is a hard stop, evaluated last so it outranks any referral
+    # above it. No amount of underwriter review makes a risk writable when
+    # the carrier has no capacity for it, so this declines rather than refers.
+    if coverage_amount_usd is not None:
+        limit = _capacity_limit(product, state)
+        if limit is not None and coverage_amount_usd > limit:
+            reasons.append(
+                f"coverage ${coverage_amount_usd:,.0f} exceeds "
+                f"${limit:,.0f} capacity for {product}/{state}"
+            )
+            outcome = "declined"
 
     return EligibilityCheck(
         applicant_id=applicant["applicant_id"],
@@ -91,35 +125,50 @@ def build_graph(gateway: ToolGateway) -> Any:
 
     async def check_eligibility(state: QuoteState) -> QuoteState:
         state["eligibility"] = _eligibility(
-            state["applicant"], state["product"], state["state"]
+            state["applicant"],
+            state["product"],
+            state["state"],
+            state.get("coverage_amount_usd"),
         ).model_dump()
         return state
 
     async def risk(state: QuoteState) -> QuoteState:
-        # --- A2A delegation: supervisor -> risk agent ---
-        state["risk"] = await gateway.call(
-            RISK, "score_risk",
-            {"applicant_id": state["applicant_id"], "peril": state["peril"]},
-        )
-        state["delegations"].append("risk.score_risk")
+        try:
+            # --- A2A delegation: supervisor -> risk agent ---
+            state["risk"] = await gateway.call(
+                RISK, "score_risk",
+                {"applicant_id": state["applicant_id"], "peril": state["peril"]},
+            )
+            state["delegations"].append("risk.score_risk")
 
-        history = await gateway.call(
-            RISK, "pull_loss_history", {"applicant_id": state["applicant_id"]}
-        )
-        state["delegations"].append("risk.pull_loss_history")
-        state["risk"]["loss_events"] = history.get("count", 0)
+            state["loss_history"] = await gateway.call(
+                RISK, "pull_loss_history", {"applicant_id": state["applicant_id"]}
+            )
+            state["delegations"].append("risk.pull_loss_history")
+        except PeerUnavailable as exc:
+            state["peer_failure"] = str(exc)
         return state
 
     async def pricing(state: QuoteState) -> QuoteState:
-        # --- A2A delegation: supervisor -> pricing agent ---
-        base_rate = await gateway.call(
-            PRICING, "lookup_base_rate",
-            {
-                "state": state["state"],
-                "product": state["product"],
-                "peril": state["peril"],
-            },
-        )
+        # The risk peer already failed. Pricing depends on its score, so
+        # calling out again would only produce a second failure to report.
+        if state.get("peer_failure"):
+            return state
+
+        try:
+            # --- A2A delegation: supervisor -> pricing agent ---
+            base_rate = await gateway.call(
+                PRICING, "lookup_base_rate",
+                {
+                    "state": state["state"],
+                    "product": state["product"],
+                    "peril": state["peril"],
+                },
+            )
+        except PeerUnavailable as exc:
+            state["peer_failure"] = str(exc)
+            return state
+
         state["base_rate"] = base_rate
         state["delegations"].append("pricing.lookup_base_rate")
 
@@ -131,28 +180,33 @@ def build_graph(gateway: ToolGateway) -> Any:
                 f"No filed rate for {state['product']}/{state['state']}/{state['peril']}"
             )
 
-        premium = await gateway.call(
-            PRICING, "calculate_premium",
-            {
-                "coverage_amount_usd": state["coverage_amount_usd"],
-                "base_rate_per_1000": base_rate.get("rate_per_1000", 0.0),
-                "risk_score": state["risk"].get("score", 50.0),
-            },
-        )
-        state["delegations"].append("pricing.calculate_premium")
+        try:
+            premium = await gateway.call(
+                PRICING, "calculate_premium",
+                {
+                    "coverage_amount_usd": state["coverage_amount_usd"],
+                    "base_rate_per_1000": base_rate.get("rate_per_1000", 0.0),
+                    "risk_score": state["risk"].get("score", 50.0),
+                },
+            )
+            state["delegations"].append("pricing.calculate_premium")
 
-        prop = state["applicant"].get("property", {})
-        premium = await gateway.call(
-            PRICING, "apply_modifiers",
-            {
-                "base_premium_usd": premium["base_premium_usd"],
-                "risk_loading_usd": premium["risk_loading_usd"],
-                "credit_band": state["applicant"].get("credit_band", "B"),
-                "prior_claims": state["applicant"].get("prior_claims_count", 0),
-                "construction_year": prop.get("construction_year", 2000),
-                "coastal_within_5km": prop.get("coastal_distance_km", 999) < 5.0,
-            },
-        )
+            prop = state["applicant"].get("property", {})
+            premium = await gateway.call(
+                PRICING, "apply_modifiers",
+                {
+                    "base_premium_usd": premium["base_premium_usd"],
+                    "risk_loading_usd": premium["risk_loading_usd"],
+                    "credit_band": state["applicant"].get("credit_band", "B"),
+                    "prior_claims": state["applicant"].get("prior_claims_count", 0),
+                    "construction_year": prop.get("construction_year", 2000),
+                    "coastal_within_5km": prop.get("coastal_distance_km", 999) < 5.0,
+                },
+            )
+        except PeerUnavailable as exc:
+            state["peer_failure"] = str(exc)
+            return state
+
         state["premium"] = premium
         state["delegations"].append("pricing.apply_modifiers")
         return state
@@ -172,11 +226,38 @@ def build_graph(gateway: ToolGateway) -> Any:
         if pricing_gap and decision == "quote":
             decision = "refer"
 
+        # Aggregate severity, not just claim frequency. Two large losses can
+        # outweigh three small ones, and the count-based eligibility rule
+        # above cannot see that - only the loss-history delegation can.
+        events = (state.get("loss_history") or {}).get("events") or []
+        total_paid = sum(float(e.get("paid_amount_usd", 0.0)) for e in events)
+        loss_threshold = load_underwriting_rules().get("aggregate_loss_referral_usd")
+        loss_referral = loss_threshold is not None and total_paid >= loss_threshold
+        if loss_referral and decision == "quote":
+            decision = "refer"
+
+        # A peer we could not reach must never fall through to an automatic
+        # quote. Fail closed: refer to a human instead.
+        peer_failure = state.get("peer_failure")
+        if peer_failure and decision == "quote":
+            decision = "refer"
+
         parts = [f"Eligibility: {eligibility['outcome']}"]
         if eligibility["reasons"]:
             parts.append("Reasons: " + "; ".join(eligibility["reasons"]))
         if pricing_gap:
             parts.append(f"Pricing gap: {pricing_gap} - referred, not auto-priced")
+        if peer_failure:
+            parts.append(f"Peer agent unavailable: {peer_failure} - referred, not auto-quoted")
+        if events:
+            parts.append(
+                f"Loss history: {len(events)} event(s), ${total_paid:,.2f} paid"
+            )
+        if loss_referral:
+            parts.append(
+                f"Aggregate paid losses ${total_paid:,.2f} meet the "
+                f"${loss_threshold:,.0f} referral threshold"
+            )
         if risk_data and "score" in risk_data:
             parts.append(
                 f"Risk score {risk_data['score']:.1f} "
@@ -195,9 +276,7 @@ def build_graph(gateway: ToolGateway) -> Any:
 
         risk_model = None
         if risk_data and "score" in risk_data:
-            risk_model = RiskScore(
-                **{k: v for k, v in risk_data.items() if k != "loss_events"}
-            )
+            risk_model = RiskScore(**risk_data)
 
         state["quote"] = Quote(
             applicant_id=state["applicant_id"],
@@ -212,6 +291,11 @@ def build_graph(gateway: ToolGateway) -> Any:
         return state
 
     def route(state: QuoteState) -> str:
+        """Skip both peer agents when the risk is declined outright.
+
+        Worth measuring: a declined applicant costs zero peer round-trips,
+        which the eval harness asserts via an empty expected_delegations.
+        """
         return "compile_quote" if state["eligibility"]["outcome"] == "declined" else "risk"
 
     graph: StateGraph = StateGraph(QuoteState)

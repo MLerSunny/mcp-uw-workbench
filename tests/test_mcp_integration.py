@@ -8,9 +8,17 @@ than a function call wearing a costume.
 
 from __future__ import annotations
 
-import pytest
+import sys
 
-from mcp_uw_workbench.gateway import PRICING, RISK, MCPGateway
+import pytest
+from mcp import StdioServerParameters
+
+from mcp_uw_workbench.gateway import (
+    PRICING,
+    RISK,
+    MCPGateway,
+    PeerUnavailable,
+)
 from mcp_uw_workbench.underwriting.orchestrator import run_quote
 
 pytestmark = [pytest.mark.anyio, pytest.mark.integration]
@@ -69,6 +77,26 @@ async def test_end_to_end_quote_over_real_mcp() -> None:
         "pricing.apply_modifiers",
     ):
         assert expected in quote["rationale"]
+
+
+async def test_unstartable_peer_raises_peer_unavailable() -> None:
+    """A peer that cannot start is a transport fault, not a mystery traceback.
+
+    Distinguishing this from a peer that *answers* with an error payload is
+    what lets the orchestrator fail closed on the former and pass the latter
+    through as data.
+    """
+    dead = {
+        RISK: StdioServerParameters(
+            command=sys.executable, args=["-m", "mcp_uw_workbench.no_such_server"]
+        )
+    }
+
+    with pytest.raises(PeerUnavailable) as excinfo:
+        async with MCPGateway(peers=dead, timeout_s=20.0):
+            pass
+
+    assert "risk" in str(excinfo.value)
 
 
 async def test_direct_and_mcp_gateways_agree() -> None:

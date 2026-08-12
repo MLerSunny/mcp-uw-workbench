@@ -1,0 +1,11 @@
+{
+  "_comment": "Underwriting policy owned by underwriting-mcp. Deliberately NOT in rate_tables.json - rates are pricing-mcp's bounded context, appetite is underwriting's. See ADR-0001.",
+
+  "capacity_limits_usd": {
+    "homeowners": { "FL": 1000000, "TX": 1500000, "CA": 1250000, "NY": 1500000 },
+    "auto": { "FL": 500000, "TX": 500000, "CA": 500000, "NY": 500000 }
+  },
+  "default_capacity_usd": 1000000,
+
+  "aggregate_loss_referral_usd": 75000
+}

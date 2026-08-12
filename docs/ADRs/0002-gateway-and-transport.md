@@ -31,6 +31,29 @@ The orchestrator depends only on the protocol. `run_quote()` opens an `MCPGatewa
 
 Peer processes are launched as `sys.executable -m mcp_uw_workbench.<peer>.server` rather than by console-script name, so the gateway works from a venv, a container, or a test runner without depending on `PATH`.
 
+### The error contract
+
+The gateway also owns the boundary between *a peer that answered badly* and
+*a peer that did not answer*:
+
+- A peer returning `{"error": ...}` is **data**. It crosses back as a normal
+  result and the orchestrator decides what it means — an unknown applicant
+  and a missing filed rate are business outcomes, not outages.
+- A peer that cannot start, dies mid-call, breaks its stdio pipe, or exceeds
+  `timeout_s` raises **`PeerUnavailable`**. Callers cannot mistake one for
+  the other, which is what lets the orchestrator fail closed on outages
+  while still passing business errors through.
+
+Cancellation is explicitly excluded from that conversion — it belongs to the
+caller and must propagate untouched.
+
+One subtlety worth recording, because it is easy to reintroduce: the
+connection timeout wraps only the MCP `initialize()` handshake, **not** the
+`enter_async_context` calls that register peers on the `AsyncExitStack`.
+Those contexts are exited later, outside the cancel scope, and anyio raises
+`Attempted to exit a cancel scope that isn't the current task's` if a scope
+spans their entry but not their exit.
+
 ## Consequences
 
 ### Positive
@@ -58,5 +81,7 @@ Peer processes are launched as `sys.executable -m mcp_uw_workbench.<peer>.server
 
 - `test_peers_advertise_expected_tools` — capability discovery over MCP
 - `test_tool_call_round_trip_over_stdio` — a call crosses a process boundary
+- `test_peer_errors_propagate_as_data` — a bad input returns a payload, not a fault
+- `test_unstartable_peer_raises_peer_unavailable` — a peer that cannot start is a fault, not a payload
 - `test_end_to_end_quote_over_real_mcp` — full supervisor → peer → peer flow
 - `test_direct_and_mcp_gateways_agree` — the two implementations do not diverge

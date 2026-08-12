@@ -31,6 +31,17 @@ def load_rate_tables() -> dict[str, Any]:
     return json.loads((_DATA_DIR / "rate_tables.json").read_text())
 
 
+@lru_cache(maxsize=1)
+def load_underwriting_rules() -> dict[str, Any]:
+    """Appetite and capacity policy, owned by underwriting-mcp.
+
+    Kept separate from `rate_tables.json` on purpose: rates belong to
+    pricing-mcp, appetite belongs to underwriting. Merging them would put
+    two teams' release cadences in one file.
+    """
+    return json.loads((_DATA_DIR / "underwriting_rules.json").read_text())
+
+
 def get_applicant(applicant_id: str) -> dict[str, Any]:
     """Lookup or raise KeyError. Callers should map to MCP error responses."""
     return load_applicants()[applicant_id]
